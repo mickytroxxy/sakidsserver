@@ -16,11 +16,7 @@ app.get('/test', (req,res) =>{
 });
 const AWS = require('aws-sdk');
 const { fs } = require('./context/methods');
-const AWSParameters = {
-  "accessKeyId": "AKIA2QFUB2ASLPANDXX3",
-  "secretAccessKey": "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",
-  "region": "ap-southeast-2",
-}
+
 const s3 = new AWS.S3(AWSParameters)
 const port = 7625;
 var rekognition = new AWS.Rekognition(AWSParameters);
