@@ -3,6 +3,14 @@ const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const upload = require("express-fileupload");
+const fs = require('fs');
+const {updateData, getDescriptors } = require("./context/firebase");
+
+const { Canvas, Image, ImageData } = require('canvas');
+const canvas = require("canvas");
+const faceapi = require('face-api.js');
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
+
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use(express.static('public'));
@@ -11,124 +19,117 @@ app.use('/files', express.static(__dirname + '/files'));
 app.use(cors());
 app.use(upload());
 const mkdirp = require('mkdirp');
-const AWS = require('aws-sdk');
-const { fs } = require('./context/methods');
-const AWSParameters = {
-  "accessKeyId": "",
-  "secretAccessKey": "",
-  "region": "ap-southeast-2",
-}
-//aws:rekognition:ap-southeast-2:721932111908:collection/sakids-first
-//aws rekognition list-collections
-//aws rekognition describe-collection --colection-id ""
-const s3 = new AWS.S3(AWSParameters)
+
 const port = 7625;
-var rekognition = new AWS.Rekognition(AWSParameters);
+Promise.all([
+    faceapi.nets.faceRecognitionNet.loadFromDisk('./models'),
+    faceapi.nets.faceLandmark68Net.loadFromDisk('./models'),
+    faceapi.nets.ssdMobilenetv1.loadFromDisk('./models')
+]).then(startServer);
 
-
-const uploadFile = (filePath,bucketName,newFileNameKey) => {
-  const fileStream = fs.createReadStream(filePath);
-  fileStream.on('error',(err) => {
-    console.log('File Error', err)
-  })
-
-  const params = {
-    Bucket:bucketName,
-    Key:newFileNameKey,
-    Body: fileStream
-  }
-  s3.upload(params,(err,data) => {
-    if(err){
-      console.log(err)
-    }
-    if(data){
-      console.log('SUCCESS', data?.Location)
-    }
-  })
-}
-
-
-app.get("/", async(req,res) =>{
-  res.send('............SAKIDS IS RUNNING.............')
-});
-app.post("/uploadavatar",function(req,res){
-  if (req.files) {
-    const file = req.files.fileUrl;
-    const {schoolId,studentId} = req.body;
-    mkdirp.sync('./files/'+schoolId);
-    const filePath = `./files/${schoolId}/${studentId}.png`;
-    file.mv(filePath, (err) => {
-      if (err) {
-        res.send({status:0,message:'Failed to upload your file'})
-      }else{
-        indexFaces(filePath,studentId,(status) => {
-          if(status){
-            res.send({status:200,message:'Your profile photo has been enrolled successfully'})
-          }
-        })
-      }
+async function startServer() {
+    app.get('/test', (req, res) => {
+        res.send('............SAKIDS IS RUNNING.............')
     });
-  }
-});
-app.post("/recognize",function(req,res){
-	if (req.files) {
-    const file = req.files.fileUrl;
-    const {parentId} = req.body;
-    mkdirp.sync('./searches/'+parentId);
-    const filePath = `./searches/${parentId}.png`;
-    file.mv(filePath, (err) => {
-      if (err) {
-        res.send({status:0,message:'Failed to upload your file'})
-      }else{
-        searchByImage(filePath,(response)=> {
-          if(!response){
-            res.send({status:0,message:'Not Recognized, please try again!'})
-          }else{
-            res.send({status:200,message:response})
-          }
-        })
-      }
+
+    app.post("/uploadavatar", async function (req, res) {
+        if (req.files) {
+            const file = req.files.fileUrl;
+            const { schoolId, studentId } = req.body;
+            mkdirp.sync('./files/' + schoolId);
+            const filePath = `./files/${schoolId}/${studentId}.png`;
+            file.mv(filePath, async (err) => {
+                if (err) {
+                    res.send({ status: 0, message: 'Failed to upload your file' })
+                } else {
+                    try {
+                        const results = await indexFaces(filePath, studentId);
+                        res.send(results);
+                    } catch (error) {
+                        console.error(error);
+                        res.send({ status: 0, message: 'Internal server error' });
+                    }
+                }
+            });
+        }
     });
-  }
-});
-const searchByImage =  (filePath,cb) => {
-  var bitmap = fs.readFileSync(filePath);
-	rekognition.searchFacesByImage({
-	 	"CollectionId": "sakids-first",
-	 	"FaceMatchThreshold": 0,
-	 	"Image": { 
-	 		"Bytes": bitmap,
-	 	},
-	 	"MaxFaces": 1
-	}, function(err, data) {
-	 	if (err) {
-	 		console.log(err);
-	 	} else {
-			if(data.FaceMatches && data.FaceMatches.length > 0 && data.FaceMatches[0].Face){
-        console.log(JSON.stringify(data.FaceMatches[0].Face))
-        cb({studentId:data.FaceMatches[0].Face?.ExternalImageId,confidence:data.FaceMatches[0].Face?.Confidence}) 
-			} else {
-				console.log("Not recognized");
-        cb(false)
-			}
-		}
-	});
+
+    app.post("/recognize", async function (req, res) {
+        if (req.files) {
+            const file = req.files.fileUrl;
+            const { parentId } = req.body;
+            mkdirp.sync('./searches/');
+            const filePath = `./searches/${parentId}.png`;
+            file.mv(filePath, async (err) => {
+                if (err) {
+                    res.send({ status: 0, message: 'Failed to upload your file' })
+                } else {
+                    try {
+                        const result = await searchByImage(filePath);
+                        res.send(result);
+                    } catch (error) {
+                        console.error(error);
+                        res.send({ status: 500, message: 'Internal server error' });
+                    }
+                }
+            });
+        }
+    });
+
+    app.listen(port, () => {
+        console.log(`Listening on port ${port} (HTTP)...>`);
+        //searchByImage("./files/FR70416925/EN77469711.png")
+        //searchByImage("./searches/MI83892218.png")
+    });
 }
-const indexFaces = (filePath,studentId,cb) => {
-  var bitmap = fs.readFileSync(filePath);
-  rekognition.indexFaces({
-    "CollectionId": "sakids-first", "DetectionAttributes": [ "ALL" ],
-    "ExternalImageId": studentId,"Image": {"Bytes": bitmap}
-  }, function(err, data) {
-    if (err) {
-      console.log('failed', err)
-      cb(false);
-    } else {
-      cb(true)
-      console.log(JSON.stringify(data))
+
+async function indexFaces(filePath, studentId) {
+    const img = await canvas.loadImage(filePath);
+    const results = await faceapi.detectAllFaces(img).withFaceLandmarks().withFaceDescriptors();
+    if(results.length === 1) {
+        const descriptor = results[0].descriptor.toString();
+        const response = await updateData('kids',studentId,{descriptor});
+        if(response){
+            return { status: 200, message: 'Your profile photo has been enrolled successfully' }
+        }else{
+            return { status: 0, message: 'There was an error while trying to save your avatar!' }
+        }
+    }else if(results.length > 1){
+        return { status: 200, message: 'Oops, we found more than 1 faces in the image!' }
+    }else {
+        return { status: 200, message: 'No face detected in the image!' }
     }
-  });
 }
-app.listen(port, () => {
-  console.log(`Listening on port ${port} (HTTP)...`);
-});
+
+async function searchByImage(filePath) {
+    const img = await canvas.loadImage(filePath);
+    const results = await faceapi.detectAllFaces(img).withFaceLandmarks().withFaceDescriptors();
+    if(results.length === 1) {
+        const queryDescriptor = results[0].descriptor;
+        let descriptors = await getDescriptors();
+        if(descriptors?.length > 0){
+            descriptors = descriptors.map(face => {
+                const {descriptor = '',id:schoolId,...rest} = face;
+                if (descriptor) {
+                    const FloatDescriptor = new Float32Array(descriptor.split(',').map(parseFloat));
+                    return new faceapi.LabeledFaceDescriptors(schoolId, [FloatDescriptor]);
+                }
+            })
+            
+            const faceMatcher = new faceapi.FaceMatcher(descriptors, 0.6);
+            const bestMatch = faceMatcher.findBestMatch(queryDescriptor);
+            if(bestMatch?.distance < 0.3){
+                return { status: 200, message: {studentId:bestMatch.label,confidence:bestMatch.distance} }
+            }else{
+                return { status: 0, message: 'Not Recognized, please try again!' }
+            }
+        }else{
+            return { status: 0, message: 'No faces found to compare with!' }
+        }
+    }else if(results.length > 1){
+        return { status: 0, message: 'Oops, we found more than 1 faces in the image!' }
+    }else {
+        return { status: 0, message: 'No face detected in the image!' }
+    }
+
+}

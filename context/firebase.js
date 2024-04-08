@@ -3,12 +3,12 @@ const { getFirestore, collection, doc,updateDoc, getDocs, setDoc, query, where }
 const { Expo } = require('expo-server-sdk');
 let expo = new Expo();
 const firebaseConfig = {
-    apiKey: "AIzaSyADeaY6ODRICSJoK4ThUXedwMrFwc2ZP40",
-    authDomain: "myguy-a78d0.firebaseapp.com",
-    projectId: "myguy-a78d0",
-    storageBucket: "myguy-a78d0.appspot.com",
-    messagingSenderId: "743810339840",
-    appId: "1:743810339840:web:e9a54dd0e53c8cd61074e5"
+    apiKey: "AIzaSyAGFeA3lGSbetYpwF1NkCajCx279wjymAQ",
+    authDomain: "sakids-52169.firebaseapp.com",
+    projectId: "sakids-52169",
+    storageBucket: "sakids-52169.appspot.com",
+    messagingSenderId: "743868067655",
+    appId: "1:743868067655:web:2caf46c7422fcdfd86e662"
 };
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -27,16 +27,17 @@ const updateData = async (tableName,docId,obj) => {
         await updateDoc(docRef, obj);
         return true;
     } catch (e) {
+        console.log(e)
         return false;
     }
 }
-const getDocumentById = async (documentId,cb) => {
+const getDescriptors = async () => {
     try {
-        const querySnapshot = await getDocs(query(collection(db, "documents"), where("documentId", "==", documentId)));
+        const querySnapshot = await getDocs(query(collection(db, "kids"), where("descriptor", "!=", '')));
         const data = querySnapshot.docs.map(doc => doc.data());
-        cb(data)
+        return data;
     } catch (e) {
-        cb(e);
+        return null;
     }
 }
 const getDocumentByUserId = async (documentOwner,cb) => {
@@ -88,4 +89,4 @@ const sendPushNotification = async (to,body) => {
 const listenToChange =  (requestId,cb) => {
     
 }
-module.exports = {createData,login,getDocumentByUserId,listenToChange,sendPushNotification,updateData,getDocumentById,getUserInfo};
+module.exports = {createData,login,getDocumentByUserId,listenToChange,sendPushNotification,updateData,getDescriptors,getUserInfo};
